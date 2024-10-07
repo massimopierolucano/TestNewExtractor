@@ -1,0 +1,71 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="CL_Debug" Id="{356c446d-fcbc-4fc2-8cdf-9338be0ee62c}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK CL_Debug
+VAR
+	i01                         : INT;
+  nHistoryStep_AR01           : ARRAY[0..C.uiHistoStep_C] OF DINT;
+  nLastStep01                 : DINT := -1;
+  
+  i02                         : INT;
+  nHistoryStep_AR02           : ARRAY[0..C.uiHistoStep_C] OF DINT;
+  nLastStep02                 : DINT := -1;
+  
+  i03                         : INT;
+  nHistoryStep_AR03           : ARRAY[0..C.uiHistoStep_C] OF DINT;
+  nLastStep03                 : DINT := -1;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="Case01Histo" Id="{36943467-910f-48a2-abc4-66e7555a48f8}">
+      <Declaration><![CDATA[METHOD Case01Histo : BOOL
+VAR_INPUT
+	nStep : DINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nStep <> nLastStep01 THEN
+  nLastStep01 := nStep;
+  FOR i01:= C.uiHistoStep_C TO 1 BY -1 DO
+    nHistoryStep_AR01[i01] := nHistoryStep_AR01[i01-1];
+  END_FOR
+  nHistoryStep_AR01[0] := nStep;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Case02Histo" Id="{cace08ae-d093-4911-a476-ba59f8020058}">
+      <Declaration><![CDATA[METHOD Case02Histo : BOOL
+VAR_INPUT
+	nStep : DINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nStep <> nLastStep02 THEN
+  nLastStep02 := nStep;
+  FOR i02:= C.uiHistoStep_C TO 1 BY -1 DO
+    nHistoryStep_AR02[i02] := nHistoryStep_AR01[i02-1];
+  END_FOR
+  nHistoryStep_AR02[0] := nStep;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Case03Histo" Id="{77821689-f15f-4e51-9533-ac651e8d11f9}">
+      <Declaration><![CDATA[METHOD Case03Histo : BOOL
+VAR_INPUT
+	nStep : DINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF nStep <> nLastStep03 THEN
+  nLastStep03 := nStep;
+  FOR i03:= C.uiHistoStep_C TO 1 BY -1 DO
+    nHistoryStep_AR03[i03] := nHistoryStep_AR01[i03-1];
+  END_FOR
+  nHistoryStep_AR03[0] := nStep;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

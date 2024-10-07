@@ -1,0 +1,584 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="CL_Axis" Id="{4567c3e8-8516-4aa4-950c-60a2b1b6a469}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK CL_Axis EXTENDS CL_Debug
+VAR_INPUT
+	bEnableMove     : BOOL := TRUE;   // Enable the moving of axis
+	lrAxisOverride	: LREAL:= 100;    // Override of the axis
+END_VAR
+VAR_OUTPUT	
+	bError			: BOOL := FALSE;
+	nErrorId		: UDINT;
+END_VAR
+VAR
+//  INTERNAL VAR
+  _AxisREF_P		        		: POINTER TO AXIS_REF;
+  _udCalibrationSensor_P  	: POINTER TO UDINT;
+  _LineNumber_P             : POINTER TO INT;
+  _nAxisTorque_P            : POINTER TO INT;
+	_bIsDone                	: BOOL;
+  _bIsBusy                	: BOOL;
+  _lrActPos                 : LREAL;
+
+//  Request var	BOOL
+	bRequestStop		  				: BOOL := FALSE;
+	bRequestPowerOn						: BOOL := FALSE;
+	bRequestPowerOff					: BOOL := FALSE;
+	bRequestHoming						: BOOL := FALSE;
+	bRequestReset		  				: BOOL := FALSE;
+	bRequestMoveAbso					: BOOL := FALSE;
+	bInit               			: BOOL := FALSE;
+	
+// FBs
+	fbPower				      : MC_Power;
+	fbStop				      : MC_Stop;
+	fbReset				      : MC_Reset; 
+	fbHome				      : MC_Home;
+  fbHomeInv				    : MC_Home;
+	fbMoveAbso				  : MC_MoveAbsolute;
+  fbReadStatus        : MC_ReadStatus;
+  fbMoveJog           : MC_Jog;
+  fbTimeRetryHomming  : TON := (PT := T#1S);
+  fbTimeAbortHoming   : ton := (PT := T#20S);
+  fbTrigErrorMotor    : R_Trig;
+  
+//Other var
+	nStep			          : INT;
+  
+  stHomingOption	    : ST_HomingOptions;
+  stHomingInvOption	  : ST_HomingOptions;
+  //stJogControl        : ST_HmiControlMotor;
+  lrSetHomingCheckPos : LREAL;
+	lrnOffsetExtractorHoming : LREAL;
+
+//Request var
+	eRequestedProfile		: E_AXIS_MOVE_PROFILE := E_AXIS_MOVE_PROFILE.Slow;
+	rRequestedTarget		: LREAL := 0;
+	Profile				    	: ARRAY[0..2]OF ST_AXIS_MOVE_PROFILE ;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF NOT bInit THEN
+  RETURN;
+END_IF
+
+//CALL BLOCK
+fbPower(Axis:= _AxisREF_P^, Override:= lrAxisOverride);
+fbStop(Axis:= _AxisREF_P^);
+fbReset(Axis:= _AxisREF_P^);
+fbHome( Axis:= _AxisREF_P^, bCalibrationCam:=_udCalibrationSensor_P^.19,
+		    Options := stHomingOption, Position := lrnOffsetExtractorHoming);
+fbHomeInv( Axis:= _AxisREF_P^, bCalibrationCam:=_udCalibrationSensor_P^.19,
+		    Options := stHomingInvOption, Position := lrnOffsetExtractorHoming);
+fbMoveAbso(Axis:= _AxisREF_P^);
+fbReadStatus(Axis:= _AxisREF_P^,Enable := TRUE);
+//fbMoveJog(Axis := _AxisREF_P^,JogForward := stJogControl.bMoveFW, JogBackwards := stJogControl.bMoveBW);
+fbTimeRetryHomming(IN := nStep = E_StepAxis.AbortHoming);
+fbTimeAbortHoming(IN := nStep = E_StepAxis.RetryHoming);
+fbTrigErrorMotor(CLK := _AxisREF_P^.NcToPlc.ErrorCode <> 0);
+_lrActPos := _AxisREF_P^.NcToPlc.ActPos;
+
+
+IF fbTrigErrorMotor.Q THEN
+  nStep := E_StepAxis.Idle;
+  bRequestMoveAbso := FALSE;
+  bRequestHoming := FALSE;
+  fbHome.Execute := FALSE;
+  fbHomeInv.Execute := FALSE;
+  fbMoveAbso.Execute := FALSE;
+END_IF
+
+// If bEnableMove is down, do a stop automatically
+//IF NOT bEnableMove THEN
+//	bRequestStop		:= TRUE;
+//	eRequestedProfile	:= E_AXIS_MOVE_PROFILE.Fast;
+//END_IF
+
+
+CASE nStep OF
+	// ------------------------------------------------------------------
+	E_StepAxis.IDLE :	
+		bRequestStop	:= FALSE;			
+    IF bRequestPowerOff THEN
+      nStep := E_StepAxis.PoweringOff;
+      bRequestPowerOff	:= FALSE;
+    ELSIF bRequestPowerOn THEN
+      nStep := E_StepAxis.PoweringOn;
+      bRequestPowerOn		:= FALSE;
+    ELSIF bRequestMoveAbso THEN
+      nStep := E_StepAxis.InitMoveAbs;
+      bRequestMoveAbso	:= FALSE;
+    ELSIF bRequestHoming THEN
+      bRequestHoming		:= FALSE;
+			IF _udCalibrationSensor_P^.19 THEN
+				nStep := E_StepAxis.InitRetryHoming;
+			ELSE
+				nStep := E_StepAxis.InitHoming;
+			END_IF	
+    ELSIF bRequestReset OR (_AxisREF_P^.NcToPlc.ErrorCode <> 0) THEN
+			//added to support MDF extractor: homing in both direction		
+			nStep := E_StepAxis.InitReset;
+      bRequestReset		:= FALSE;
+    END_IF
+	
+	// ******************************************************************
+	// --- POWER ---
+	// ******************************************************************
+		// ------------------------------------------------------------------
+		E_StepAxis.PoweringOff :
+      fbPower.Enable := FALSE;
+			//objHommingError.Set(Activate:= FALSE);
+      IF NOT fbPower.Status THEN
+        _bIsDone	:= TRUE;
+        _bIsBusy	:= FALSE;
+        nStep := E_StepAxis.IDLE;
+      ELSIF fbPower.Error THEN
+        nErrorId := fbPower.ErrorID;
+        nStep := E_StepAxis.ERROR;
+      END_IF
+			
+		// ------------------------------------------------------------------
+		E_StepAxis.PoweringOn :
+      fbPower.Enable			:= TRUE;
+      fbPower.Enable_Positive	:= TRUE;
+      fbPower.Enable_Negative	:= TRUE;
+      IF fbPower.Status THEN
+        _bIsDone	:= TRUE;
+        _bIsBusy	:= FALSE;
+        nStep  := E_StepAxis.Idle;
+      ELSIF fbPower.Error THEN
+        fbPower.Enable			:= FALSE;
+        fbPower.Enable_Positive	:= FALSE;
+        fbPower.Enable_Negative	:= FALSE;
+        _bIsBusy	:= FALSE;
+        nStep  := E_StepAxis.Idle;      
+      END_IF
+			
+	// ******************************************************************
+	// --- ABSOLUTE ---
+	// ******************************************************************
+		// ------------------------------------------------------------------
+		E_StepAxis.InitMoveAbs:
+      fbMoveAbso.Position		:= rRequestedTarget;
+      fbMoveAbso.Velocity		:= Profile[eRequestedProfile].Velo;
+      fbMoveAbso.Acceleration	:= Profile[eRequestedProfile].Acc;
+      fbMoveAbso.Deceleration	:= Profile[eRequestedProfile].Dec;
+      fbMoveAbso.Jerk			:= Profile[eRequestedProfile].Jerk;
+      fbMoveAbso.Execute			:= TRUE;
+      IF fbMoveAbso.Busy THEN
+         nStep := E_StepAxis.MoveAbs;
+      END_IF
+    
+    // ------------------------------------------------------------------  
+    E_StepAxis.MoveAbs:    
+      IF fbMoveAbso.Done THEN
+        nStep:= E_StepAxis.EndMoveAbs;
+      ELSIF bRequestStop THEN
+        fbMoveAbso.Execute := FALSE;
+        nStep:= E_StepAxis.InitStop;
+        bRequestStop := FALSE;
+      ELSIF fbMoveAbso.Error THEN
+        fbMoveAbso.Execute	:= false;
+        _bIsBusy	:= FALSE;
+        nStep     := E_StepAxis.Idle;
+      END_IF
+     
+    // ------------------------------------------------------------------  
+    E_StepAxis.EndMoveAbs: 
+      _bIsDone	:= TRUE;
+      _bIsBusy	:= FALSE;
+      fbMoveAbso.Execute  := FALSE;
+      nStep     := E_StepAxis.Idle;
+						
+	// ******************************************************************
+	// --- STOP ---
+	// ******************************************************************
+		// ------------------------------------------------------------------
+		E_StepAxis.InitStop :
+			bRequestStop	:= FALSE;
+      fbStop.Deceleration	:= Profile[eRequestedProfile].Dec;
+      fbStop.Jerk			    := Profile[eRequestedProfile].Jerk;
+      fbStop.Execute		  := TRUE;
+      IF fbStop.Busy THEN
+        nStep := E_StepAxis.Stopping;
+			END_IF
+                  
+		// ------------------------------------------------------------------
+		E_StepAxis.Stopping :        
+      IF _AxisREF_P^.Status.NotMoving THEN
+        _bIsDone	:= TRUE;
+        _bIsBusy	:= FALSE;
+        nStep  := E_StepAxis.EndStopping;
+      END_IF
+        
+		// ------------------------------------------------------------------
+		E_StepAxis.EndStopping :        
+      fbStop.Execute	:= FALSE;
+      //objHommingError.Set(Activate:= FALSE);
+			nStep           := E_StepAxis.Idle;
+
+	// ******************************************************************
+	// --- HOMING ---
+	// ******************************************************************
+		// ------------------------------------------------------------------
+		E_StepAxis.InitHoming:
+      fbHome.Execute			:= TRUE;
+      IF fbHome.Busy THEN
+        nStep := E_StepAxis.Homing;
+			END_IF      
+    
+    // ------------------------------------------------------------------  
+    E_StepAxis.Homing:    
+      IF fbHome.Done THEN
+        nStep:= E_StepAxis.EndHoming;
+      ELSIF bRequestStop THEN
+        fbHome.Execute			:= false;
+        nStep:= E_StepAxis.InitStop;
+        bRequestStop := FALSE;
+      ELSIF _nAxisTorque_P^ < -800  THEN
+        nStep:= E_StepAxis.InitAbortHoming;    
+      END_IF
+ 
+		// ------------------------------------------------------------------
+		E_StepAxis.InitAbortHoming:
+      fbStop.Deceleration	:= Profile[eRequestedProfile].Dec;
+      fbStop.Jerk			    := Profile[eRequestedProfile].Jerk;
+      fbStop.Execute		  := TRUE;
+      fbHome.Execute			:= FALSE;
+      IF fbStop.Busy THEN
+        nStep := E_StepAxis.AbortHoming;
+			END_IF
+      
+		// ------------------------------------------------------------------
+		E_StepAxis.AbortHoming:
+      IF _AxisREF_P^.Status.NotMoving AND fbTimeRetryHomming.Q THEN
+        fbStop.Execute	:= FALSE;
+        nStep  := E_StepAxis.InitRetryHoming;
+      END_IF    
+    
+    // ------------------------------------------------------------------  
+    E_StepAxis.EndHoming: 
+      _bIsDone	:= TRUE;
+      _bIsBusy	:= FALSE;
+      fbHome.Execute			:= FALSE;
+      fbHomeInv.Execute			:= FALSE;
+      nStep                   := E_StepAxis.Idle;
+    
+    // ------------------------------------------------------------------   
+		E_StepAxis.InitRetryHoming:
+      fbHomeInv.Execute			:= TRUE;
+      IF fbHomeInv.Busy THEN
+        lrSetHomingCheckPos := _AxisREF_P^.NcToPlc.ActPos;
+        nStep := E_StepAxis.RetryHoming;
+			END_IF  
+
+    // ------------------------------------------------------------------  
+    E_StepAxis.RetryHoming:    
+      IF fbHomeInv.Done THEN
+        nStep:= E_StepAxis.EndHoming;
+      ELSIF bRequestStop THEN
+        fbHomeInv.Execute			:= FALSE;
+        nStep:= E_StepAxis.InitStop;
+        bRequestStop := FALSE;
+      ELSIF  (_nAxisTorque_P^ > 600) THEN
+        nStep:= E_StepAxis.InitStop;
+        fbHomeInv.Execute := FALSE;
+        //objHommingError.Set(Activate:= TRUE);      
+      END_IF
+			
+	// ******************************************************************
+	// --- RESETTING ---
+	// ******************************************************************
+  	// ------------------------------------------------------------------
+		E_StepAxis.InitReset :
+      fbReset.Execute		:= TRUE;
+      IF fbReset.Busy THEN
+        nStep := E_StepAxis.Resetting;
+      END_IF
+      
+    // ------------------------------------------------------------------
+		E_StepAxis.Resetting :
+      IF fbReset.Done THEN
+        bError	:= FALSE;
+        _bIsDone	:= TRUE;
+        _bIsBusy	:= FALSE;
+        nStep := E_StepAxis.EndReset;
+      END_IF
+      
+		// ------------------------------------------------------------------
+		E_StepAxis.EndReset:
+      fbReset.Execute	:= FALSE;
+      nStep := E_StepAxis.Idle;
+			
+	// ******************************************************************
+	// --- ERROR ---
+	// ******************************************************************
+		// ------------------------------------------------------------------
+		E_StepAxis.ERROR :
+				//added by Tristan 23-4-2024
+				fbPower.Enable			:= FALSE;
+        fbPower.Enable_Positive	:= FALSE;
+        fbPower.Enable_Negative	:= FALSE;
+				      fbHome.Execute			:= FALSE;
+      fbHomeInv.Execute			:= FALSE;
+			bRequestStop := FALSE;
+      bError	:= TRUE;
+      _bIsBusy	:= FALSE;
+END_CASE
+
+// Call again to refresh cmd
+fbPower(Axis:= _AxisREF_P^, Override:= lrAxisOverride);
+fbStop(Axis:= _AxisREF_P^);
+fbReset(Axis:= _AxisREF_P^);
+fbHome( Axis:= _AxisREF_P^, bCalibrationCam:=_udCalibrationSensor_P^.19,
+		    Options := stHomingOption, Position := lrnOffsetExtractorHoming);
+fbHomeInv( Axis:= _AxisREF_P^, bCalibrationCam:=_udCalibrationSensor_P^.19,
+		    Options := stHomingInvOption, Position := lrnOffsetExtractorHoming);
+fbMoveAbso(Axis:= _AxisREF_P^);
+fbReadStatus(Axis:= _AxisREF_P^,Enable := TRUE);
+
+Case01Histo( nStep);]]></ST>
+    </Implementation>
+    <Property Name="bIsBusy" Id="{9cdbcdcd-f167-4b88-b239-75b116312a19}">
+      <Declaration><![CDATA[PROPERTY bIsBusy : bool]]></Declaration>
+      <Get Name="Get" Id="{a2de3a69-39aa-446c-aaa6-073b9425fa0e}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[bIsBusy := _bIsBusy;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="bIsDone" Id="{5ad87af1-4751-42c0-bd52-50341b55f3d8}">
+      <Declaration><![CDATA[PROPERTY bIsDone : bool]]></Declaration>
+      <Get Name="Get" Id="{f37444c3-07b8-4dc1-8ccd-e12cf77064fb}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[bIsDone := _bIsDone;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="bIsHomed" Id="{9539c2cd-287b-4c8f-a91b-0da6c0f9f2e9}">
+      <Declaration><![CDATA[PROPERTY bIsHomed : bool]]></Declaration>
+      <Get Name="Get" Id="{af15eae7-d920-4572-8a94-43a03f67b4e7}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[IF _AxisREF_P <> 0 THEN
+	bIsHomed := _AxisREF_P^.Status.Homed;
+END_IF]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="bIsInPos" Id="{91270c6b-26f0-4a6e-ad64-2b015c764f79}">
+      <Declaration><![CDATA[PROPERTY bIsInPos : bool]]></Declaration>
+      <Get Name="Get" Id="{9da7f8db-a2e0-4b31-a7bd-360a36b94d85}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[bIsInPos := _AxisREF_P^.Status.InPositionArea;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="bIsPowered" Id="{e811981e-73f1-44f1-a305-eb91bf49100b}">
+      <Declaration><![CDATA[PROPERTY bIsPowered : bool]]></Declaration>
+      <Get Name="Get" Id="{efe47dad-d303-41d0-8351-4689cf9ba916}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[bIsPowered :=  fbPower.Status;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="bIsStopped" Id="{57ecda0f-d719-43cb-9efe-74984bf6d5fa}">
+      <Declaration><![CDATA[PROPERTY bIsStopped : BOOL]]></Declaration>
+      <Get Name="Get" Id="{259228a0-2484-4544-99c5-22c934a0e60b}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[bIsStopped := _AxisREF_P^.Status.NotMoving;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="InError" Id="{de12961e-e2fb-43ff-a024-66f4b4fc3e83}">
+      <Declaration><![CDATA[PROPERTY InError : bool]]></Declaration>
+      <Get Name="Get" Id="{0813e4ec-d0dd-4cea-8d70-bafb75a5990e}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[InError := _AxisREF_P^.NcToPlc.ErrorCode <> 0;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="Init" Id="{d58113f1-9b7f-4de8-8862-6ccfe1738b86}">
+      <Declaration><![CDATA[METHOD Init : BOOL
+VAR_INPUT
+	AxisREF_P				      	: POINTER TO AXIS_REF;
+  bHomingSensor_P			    : POINTER TO BOOL;
+  nAxisTorque_P           : POINTER TO INT;
+  nLineNumber_P           : POINTER TO INT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT bInit and nAxisTorque_P <> 0 AND bHomingSensor_P <> 0 AND nLineNumber_P <> 0 AND AxisREF_P <> 0 THEN
+  bInit := TRUE;
+
+	_udCalibrationSensor_P := bHomingSensor_P;
+	_AxisREF_P := AxisREF_P;
+	_LineNumber_P := nLineNumber_P;
+	_nAxisTorque_P :=  nAxisTorque_P;
+	
+	stHomingOption.SearchDirection := MC_Direction.MC_Negative_Direction;
+	stHomingOption.SyncDirection := MC_Direction.MC_Positive_Direction;
+	stHomingInvOption.SearchDirection := MC_Direction.MC_Positive_Direction;
+	stHomingInvOption.SyncDirection := MC_Direction.MC_Positive_Direction;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="lrActPos" Id="{c54e65c7-ca3e-4200-9adf-9b4c027cb505}">
+      <Declaration><![CDATA[PROPERTY lrActPos : lreal]]></Declaration>
+      <Get Name="Get" Id="{277e4f03-6eef-49a5-b03a-5755e75172c1}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[lrActPos := _lrActPos;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="lrActTorque" Id="{e819bdcf-b50c-4dec-97e2-9c7c331f8d78}">
+      <Declaration><![CDATA[PROPERTY lrActTorque : lreal]]></Declaration>
+      <Get Name="Get" Id="{d9beb1d3-0cdd-4b63-aeeb-6cb703bf10f5}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[lrActTorque := _AxisREF_P^.NcToPlc.ActTorque;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="RequestHoming" Id="{bde399b3-48b6-4328-9180-3f6f386902cf}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestHoming : bool
+VAR_INPUT
+	lrnOffsetExtractorHomingRef : LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone			:= FALSE;
+IF bIsPowered AND bEnableMove AND NOT bError THEN
+	bRequestHoming 		:= TRUE;
+	_bIsBusy				    := TRUE;
+	lrnOffsetExtractorHoming := lrnOffsetExtractorHomingRef;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RequestMove" Id="{48eabfaf-5b03-4bf9-8971-0cc7ead21244}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestMove : BOOL
+VAR_INPUT
+	Profile	: E_AXIS_MOVE_PROFILE;
+	Target	: LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone		:= FALSE;
+
+IF bIsPowered AND bEnableMove AND NOT bError AND NOT bIsBusy THEN
+  _bIsBusy				  := TRUE;
+  bRequestMoveAbso	:= TRUE;
+  eRequestedProfile	:= Profile;
+  rRequestedTarget	:= Target;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RequestPowerOFF" Id="{70143dd6-58ae-481c-9e9c-ce9a12588e4c}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestPowerOFF : BOOL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone			:= FALSE;
+
+IF bIsPowered AND NOT bIsBusy THEN
+	bRequestPowerOFF	:= TRUE;
+	_bIsBusy				:= TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RequestPowerON" Id="{b090a5ad-a71c-4f1b-8a74-ac13d1e89520}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestPowerON : bool
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone			:= FALSE;
+
+IF NOT bIsPowered AND NOT bError THEN
+	bRequestPowerON		:= TRUE;
+	_bIsBusy				  := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RequestReset" Id="{17b775ac-8ee7-4fb0-adba-efb5d409199f}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestReset :bool
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone			:= FALSE;
+
+IF TRUE(*bError*) THEN
+	bRequestReset 		:= TRUE;
+	_bIsBusy				:= TRUE;
+	nErrorId			:= 0;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RequestStop" Id="{3170d0f6-3115-4da8-9735-0123a15f16e3}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD RequestStop : bool
+VAR_INPUT
+	Profile	: E_AXIS_MOVE_PROFILE;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_bIsDone		:= FALSE;
+IF _bIsBusy THEN
+	bRequestStop := TRUE;
+	eRequestedProfile	:= Profile;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetAxisProfile" Id="{6dac2bbb-744e-40ed-a034-97742cb9df2f}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable'}
+METHOD SetAxisProfile : BOOL
+VAR_INPUT
+	Profile			: E_AXIS_MOVE_PROFILE;
+	Velocity		: REAL;
+	Acceleration	: REAL;
+	Deceleration	: REAL;
+	Jerk			: REAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[THIS^.Profile[Profile].Velo		:= Velocity;
+THIS^.Profile[Profile].Acc		:= Acceleration;
+THIS^.Profile[Profile].Dec		:= Deceleration;
+THIS^.Profile[Profile].Jerk		:= Jerk;
+
+]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

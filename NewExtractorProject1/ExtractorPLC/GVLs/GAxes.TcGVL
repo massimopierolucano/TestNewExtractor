@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <GVL Name="GAxes" Id="{9789f159-f0ab-4f4a-9438-2a7b0bc1cb64}">
+    <Declaration><![CDATA[VAR_GLOBAL
+  {attribute 'TcNcAxis' := 'Axis 1'} 
+  ExtractorAxis		      :  AXIS_REF;
+  
+  {attribute 'TcLinkTo' := 'TIIB[AX8620]^AX8206^Ch A^Ch A AxisMain Inputs^Ch A Digital inputs;'}
+  udHomingSensor AT %I* : UDINT;
+  
+  {attribute 'TcLinkTo' := 'TIIB[AX8620]^AX8206^Ch A^Ch A TorqueControl Inputs^Ch A Torque/force actual value;'}
+  nTorqueForce AT %I*   : INT;
+END_VAR
+
+]]></Declaration>
+  </GVL>
+</TcPlcObject>

@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="E_StepAxis" Id="{9d1461ca-9455-4ec7-9499-14ba825dea07}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_StepAxis :
+(
+	Idle	        := 0,
+	// STEPS POWER
+	PoweringOn		:= 2,
+	PoweringOff	  := 4,
+	
+	// STEPS ABSOLUTE
+  InitMoveAbs   := 10,
+	MoveAbs		    := 11,
+	EndMoveAbs    := 12,
+  
+	// STEPS STOP
+  InitStop      := 50,
+	Stopping		  := 51,
+  EndStopping   := 52,
+	
+	// STEPS HOMING
+  InitHoming    := 60,
+	Homing			  := 61,
+  EndHoming     := 62,
+  InitAbortHoming := 63,
+  AbortHoming   := 64,
+  InitRetryHoming := 65,
+  RetryHoming     := 66,
+  
+	
+	// STEPS Reset
+  InitReset     := 70,
+	Resetting		  := 71,
+  EndReset      := 72,
+	
+	// STEPS ERROR
+	ERROR			    := 100
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

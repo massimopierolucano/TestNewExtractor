@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AXIS_MOVE_PROFILE" Id="{5c1efe64-4c57-42fb-9340-801ec384ef19}">
+    <Declaration><![CDATA[(*
+Description:
+Structur of a moving profile
+Created by 	: BRU
+Creation    : xx.11.2021	
+$Author: dbruegger $
+$Date: 2021-11-18 16:38:14 +0100 (jeu., 18 nov. 2021) $
+$Revision: 155 $
+*)
+TYPE ST_AXIS_MOVE_PROFILE :
+STRUCT
+	Velo	: REAL;// Velocity
+	Acc		: REAL;// Acceleration
+	Dec		: REAL;// Deceleration
+	Jerk	: REAL;// Jerk
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

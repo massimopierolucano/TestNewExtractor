@@ -1,0 +1,24 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="E_AXIS_MOVE_PROFILE" Id="{2fcf16b9-6913-4eb1-aec6-80e9024f76fe}">
+    <Declaration><![CDATA[(*
+Description:
+Enum of moving profiles possibilities
+Created by 	: BRU
+Creation    : xx.11.2021	
+$Author: dbruegger $
+$Date: 2021-11-18 16:38:14 +0100 (jeu., 18 nov. 2021) $
+$Revision: 155 $
+*)
+{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_AXIS_MOVE_PROFILE :
+(
+	Slow	:= 0,
+	Nominal	:= 1,
+	Fast	:= 2// Don't increase this without increase size of all arrays used this enum!!!!!!!!!!!
+)INT;
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

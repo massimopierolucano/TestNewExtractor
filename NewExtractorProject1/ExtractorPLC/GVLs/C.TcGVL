@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <GVL Name="C" Id="{f2d0c7e9-6162-4f20-8df8-b91ac86dab85}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL CONSTANT 
+	//debug
+	uiHistoStep_C								        : INT := 50;
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

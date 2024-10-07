@@ -1,0 +1,65 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{a56db081-8028-4ce7-92bf-379c86cb5f59}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+  cnt             : DINT;
+  nStep           : INT :=0;
+  objAxis         : CL_Axis;
+  nLineNumber     : INT;
+  lrOffsetHoming  : LREAL := -180;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[objAxis();
+CASE nStep OF
+  0 : 
+    objAxis.SetAxisProfile(Profile := E_AXIS_MOVE_PROFILE.Slow, Velocity := 100, Acceleration := 1000, Deceleration := 1000, Jerk := 10000);
+    objAxis.SetAxisProfile(Profile := E_AXIS_MOVE_PROFILE.Nominal, Velocity := 200, Acceleration := 1000, Deceleration := 1000, Jerk := 10000);
+    objAxis.SetAxisProfile(Profile := E_AXIS_MOVE_PROFILE.Fast, Velocity := 900, Acceleration := 2000, Deceleration := 2000, Jerk := 20000);
+    objAxis.Init(bHomingSensor_P := ADR(GAxes.udHomingSensor.19),nLineNumber_P := ADR(nLineNumber),nAxisTorque_P := ADR(GAxes.nTorqueForce),AxisREF_P := ADR(GAxes.ExtractorAxis));
+    nStep := 10;
+  10: 
+    objAxis.RequestPowerON();
+    IF objAxis.bIsBusy THEN
+      nStep := 20;
+		END_IF
+  20:
+    IF NOT objAxis.bIsBusy AND objAxis.bIsPowered THEN
+      nStep := 30;
+		END_IF
+  30:
+    objAxis.RequestHoming(lrOffsetHoming);
+    IF objAxis.bIsBusy THEN
+      nStep := 40;
+		END_IF
+  40:
+    IF NOT objAxis.bIsBusy AND objAxis.bIsHomed THEN
+      nStep := 50;
+		END_IF    
+    
+  50:
+    objAxis.RequestMove(Profile:= E_AXIS_MOVE_PROFILE.Fast,Target := 400); 
+    IF objAxis.bIsBusy THEN
+      nStep := 60;    
+		END_IF   
+  60: 
+    IF NOT objAxis.bIsBusy THEN
+      nStep := 70;       
+		END_IF  
+  70:
+    objAxis.RequestMove(Profile:= E_AXIS_MOVE_PROFILE.Fast,Target := -350); 
+    IF objAxis.bIsBusy THEN
+      nStep := 80;    
+		END_IF   
+  80: 
+    IF NOT objAxis.bIsBusy THEN
+      cnt := cnt + 1; 
+      nStep := 50;       
+		END_IF  
+    
+ 999: nStep := 999;
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
